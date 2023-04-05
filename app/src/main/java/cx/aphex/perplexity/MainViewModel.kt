@@ -2,35 +2,51 @@ package cx.aphex.perplexity
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import cx.aphex.perplexity.api.ApiService
-import cx.aphex.perplexity.api.OpenAIResponse
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
+import com.aallam.openai.api.BetaOpenAI
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okio.IOException
 import org.jsoup.Jsoup
-import retrofit2.Call
-import retrofit2.Callback
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+@BetaOpenAI
 class MainViewModel : ViewModel() {
 
-    private val _answer = MutableSharedFlow<String>()
-    val answer: SharedFlow<String> = _answer
+    private val _answerChunks = MutableStateFlow<List<String>>(emptyList())
+    val answerChunks: StateFlow<List<String>> = _answerChunks
+
+    private val _isFetchingAnswer = MutableStateFlow(false)
+    val isFetchingAnswer: StateFlow<Boolean> = _isFetchingAnswer
 
     fun search(query: String) {
         viewModelScope.launch {
+            _isFetchingAnswer.emit(true)
             val urls = fetchWebPages(query)
             val text = parseWebPages(urls)
             val prompt = buildPrompt(query, text)
-            val answer = generateAnswer(prompt)
-            _answer.emit(answer)
+
+            withContext(Dispatchers.IO) {
+                val answer = OpenAIClient.generateAnswer(prompt)
+
+                val receivedChunks = mutableListOf<String>()
+                answer.collect { chunk ->
+                    chunk.choices.firstOrNull()?.delta?.content?.let { content ->
+                        receivedChunks.add(content)
+                        _answerChunks.emit(receivedChunks)
+                    }
+                }
+            }
+
+            _isFetchingAnswer.emit(false)
         }
     }
 
@@ -86,28 +102,29 @@ class MainViewModel : ViewModel() {
         return "User query: $query\n\n$text\n\nAI:"
     }
 
-    private suspend fun generateAnswer(prompt: String): String {
-        return suspendCancellableCoroutine { cont ->
-            ApiService.openAIApi.generateAnswer(prompt).enqueue(object : Callback<OpenAIResponse> {
-                override fun onResponse(
-                    call: Call<OpenAIResponse>,
-                    response: retrofit2.Response<OpenAIResponse>
-                ) {
-                    if (response.isSuccessful) {
-                        response.body()?.choices?.firstOrNull()?.text?.let { answer ->
-                            cont.resume(answer)
-                        }
-                            ?: cont.resumeWithException(RuntimeException("No answer generated. API response: ${response.body()}"))
-                    } else {
-                        cont.resumeWithException(RuntimeException("API call failed with status code ${response.code()} and message: ${response.message()}"))
-                    }
-                }
-
-                override fun onFailure(call: Call<OpenAIResponse>, t: Throwable) {
-                    cont.resumeWithException(t)
-                }
-            })
-        }
-    }
+//    private suspend fun generateAnswer(prompt: String): String {
+//        return suspendCancellableCoroutine { cont ->
+//            OpenAIClient.generateAnswer(prompt).
+//            ApiService.openAIApi.generateAnswer(prompt).enqueue(object : Callback<OpenAIResponse> {
+//                override fun onResponse(
+//                    call: Call<OpenAIResponse>,
+//                    response: retrofit2.Response<OpenAIResponse>
+//                ) {
+//                    if (response.isSuccessful) {
+//                        response.body()?.choices?.firstOrNull()?.text?.let { answer ->
+//                            cont.resume(answer)
+//                        }
+//                            ?: cont.resumeWithException(RuntimeException("No answer generated. API response: ${response.body()}"))
+//                    } else {
+//                        cont.resumeWithException(RuntimeException("API call failed with status code ${response.code()} and message: ${response.message()}"))
+//                    }
+//                }
+//
+//                override fun onFailure(call: Call<OpenAIResponse>, t: Throwable) {
+//                    cont.resumeWithException(t)
+//                }
+//            })
+//        }
+//    }
 
 }
