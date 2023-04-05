@@ -3,26 +3,25 @@ package cx.aphex.perplexity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aallam.openai.api.BetaOpenAI
+import cx.aphex.perplexity.api.OpenAIClient
+import de.l3s.boilerpipe.extractors.ArticleExtractor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
-import okio.IOException
 import org.jsoup.Jsoup
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
+import java.net.URL
 
 @BetaOpenAI
 class MainViewModel : ViewModel() {
 
-    private val _answerChunks = MutableStateFlow<List<String>>(emptyList())
-    val answerChunks: StateFlow<List<String>> = _answerChunks
+    private val _answerChunks = MutableSharedFlow<List<String>>(replay = 0)
+    val answerChunks: SharedFlow<List<String>> = _answerChunks
 
     private val _isFetchingAnswer = MutableStateFlow(false)
     val isFetchingAnswer: StateFlow<Boolean> = _isFetchingAnswer
@@ -30,20 +29,24 @@ class MainViewModel : ViewModel() {
     fun search(query: String) {
         viewModelScope.launch {
             _isFetchingAnswer.emit(true)
-            val urls = fetchWebPages(query)
-            val text = parseWebPages(urls)
-            val prompt = buildPrompt(query, text)
-
             withContext(Dispatchers.IO) {
+                val urls = fetchWebPages(query)
+                val sources = parseWebPages(urls)
+                val prompt = buildPrompt(query, sources)
                 val answer = OpenAIClient.generateAnswer(prompt)
 
-                val receivedChunks = mutableListOf<String>()
                 answer.collect { chunk ->
                     chunk.choices.firstOrNull()?.delta?.content?.let { content ->
-                        receivedChunks.add(content)
-                        _answerChunks.emit(receivedChunks)
+                        _answerChunks.emit(listOf(content))
                     }
                 }
+
+                val sourcesListBuilder = StringBuilder()
+                sourcesListBuilder.append("\n\nSources\n")
+                sources.forEachIndexed { index, (url, text) ->
+                    sourcesListBuilder.append("[${index + 1}] [${URL(url).host}]($url)\n")
+                }
+                _answerChunks.emit(listOf(sourcesListBuilder.toString()))
             }
 
             _isFetchingAnswer.emit(false)
@@ -51,80 +54,85 @@ class MainViewModel : ViewModel() {
     }
 
     private suspend fun fetchWebPages(query: String): List<String> {
-        return suspendCancellableCoroutine { cont ->
-            val url = "https://www.google.com/search".toHttpUrl()
-                .newBuilder()
-                .addQueryParameter("q", query)
-                .build()
+        val sourceCount = 4
+        val excludeList = listOf(
+            "google", "facebook", "twitter", "instagram", "youtube", "tiktok"
+        )
+        val httpClient = OkHttpClient()
 
-            val request = Request.Builder()
-                .url(url)
-                .header(
-                    "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
-                )
-                .build()
+        // GET LINKS
+        val request = Request.Builder()
+            .url("https://www.google.com/search?q=$query")
+            .build()
+        val response = httpClient.newCall(request).execute()
+        val html = response.body?.string()
+        val document = Jsoup.parse(html)
 
-            OkHttpClient().newCall(request).enqueue(object : okhttp3.Callback {
-                override fun onResponse(call: okhttp3.Call, response: Response) {
-                    val document = response.body?.string()?.let { Jsoup.parse(it) }
-                    val elements = document?.select("div.g > div > div.rc > div.r > a[href]")
+        val linkTags = document.select("a")
+        val links = mutableSetOf<String>()
 
-                    val urls = elements?.mapNotNull { element ->
-                        element.attr("href")
-                    }
-
-                    urls?.let { cont.resume(it) }
-                }
-
-                override fun onFailure(call: okhttp3.Call, e: IOException) {
-                    cont.resumeWithException(e)
-                }
-            })
-        }
-    }
-
-    private suspend fun parseWebPages(urls: List<String>): String {
-        val stringBuilder = StringBuilder()
-        for (url in urls) {
-            try {
-                val document = Jsoup.connect(url).get()
-                val text = document.body().text()
-                stringBuilder.append(text).append("\n\n")
-            } catch (e: IOException) {
-                // Handle exception
+        linkTags.forEach { link ->
+            val href = link.attr("href")
+            if (href.startsWith("/url?q=")) {
+                val cleanedHref = href.replace("/url?q=", "").split("&")[0]
+                links.add(cleanedHref)
             }
         }
-        return stringBuilder.toString()
+
+        val filteredLinks = links.filter { link ->
+            val url = URL(link)
+            val domain = url.host
+
+            if (excludeList.any { site -> domain.contains(site) }) return@filter false
+            if (!url.protocol.equals("https", true)) return@filter false
+
+            links.indexOfFirst { otherLink -> URL(otherLink).host == domain } == links.indexOf(link)
+        }
+
+        return filteredLinks.take(sourceCount)
     }
 
-    private fun buildPrompt(query: String, text: String): String {
-        return "User query: $query\n\n$text\n\nAI:"
+    private suspend fun parseWebPages(urls: List<String>): List<Pair<String, String>> {
+        val httpClient = OkHttpClient()
+        val sources = mutableListOf<Pair<String, String>>()
+
+        urls.forEach { url ->
+            val request = Request.Builder()
+                .url(url)
+                .build()
+            val response = httpClient.newCall(request).execute()
+            val html = response.body?.string()
+
+            html?.let {
+                val sourceText = ArticleExtractor.INSTANCE.getText(it)
+                val cleanedText = cleanSourceText(sourceText)
+                sources.add(Pair(url, cleanedText.take(1500)))
+            }
+        }
+
+        return sources
     }
 
-//    private suspend fun generateAnswer(prompt: String): String {
-//        return suspendCancellableCoroutine { cont ->
-//            OpenAIClient.generateAnswer(prompt).
-//            ApiService.openAIApi.generateAnswer(prompt).enqueue(object : Callback<OpenAIResponse> {
-//                override fun onResponse(
-//                    call: Call<OpenAIResponse>,
-//                    response: retrofit2.Response<OpenAIResponse>
-//                ) {
-//                    if (response.isSuccessful) {
-//                        response.body()?.choices?.firstOrNull()?.text?.let { answer ->
-//                            cont.resume(answer)
-//                        }
-//                            ?: cont.resumeWithException(RuntimeException("No answer generated. API response: ${response.body()}"))
-//                    } else {
-//                        cont.resumeWithException(RuntimeException("API call failed with status code ${response.code()} and message: ${response.message()}"))
-//                    }
-//                }
-//
-//                override fun onFailure(call: Call<OpenAIResponse>, t: Throwable) {
-//                    cont.resumeWithException(t)
-//                }
-//            })
-//        }
-//    }
+    private fun cleanSourceText(text: String): String {
+        // This function cleans the text by removing unnecessary spaces and newlines, and normalizing the formatting.
+        return text.trim()
+            .replace(Regex("(\\n){4,}"), "\n\n\n")
+            .replace("\n\n", " ")
+            .replace(Regex(" {3,}"), "  ")
+            .replace("\t", "")
+            .replace(Regex("\\n+(\\s*\\n)*"), "\n")
+    }
 
+    private fun buildPrompt(query: String, sources: List<Pair<String, String>>): String {
+        val promptBuilder = StringBuilder()
+        promptBuilder.append("User query: $query\n")
+
+        sources.forEachIndexed { index, (_, text) ->
+            promptBuilder.append("A${index + 1}: $text [${index + 1}]\n")
+        }
+
+        promptBuilder.append("\n\nAI:")
+
+        return promptBuilder.toString()
+    }
 }

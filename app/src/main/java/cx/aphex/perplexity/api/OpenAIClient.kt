@@ -1,4 +1,4 @@
-package cx.aphex.perplexity
+package cx.aphex.perplexity.api
 
 import com.aallam.openai.api.BetaOpenAI
 import com.aallam.openai.api.chat.ChatCompletionChunk
@@ -9,6 +9,7 @@ import com.aallam.openai.api.http.Timeout
 import com.aallam.openai.api.model.ModelId
 import com.aallam.openai.client.OpenAI
 import com.aallam.openai.client.OpenAIConfig
+import cx.aphex.perplexity.BuildConfig
 import kotlinx.coroutines.flow.Flow
 import kotlin.time.Duration.Companion.seconds
 
@@ -17,7 +18,6 @@ object OpenAIClient {
     val config = OpenAIConfig(
         token = BuildConfig.OPENAI_API_KEY,
         timeout = Timeout(socket = 60.seconds),
-        // additional configurations...
     )
 
     val openAI = OpenAI(config)
@@ -39,7 +39,6 @@ object OpenAIClient {
             temperature = 0.0
         )
 
-        val completions: Flow<ChatCompletionChunk> = openAI.chatCompletions(chatCompletionRequest)
-        return completions
+        return openAI.chatCompletions(chatCompletionRequest)
     }
 }
