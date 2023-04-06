@@ -2,7 +2,8 @@
     <!-- Base application theme. -->
     <style name="Base.Theme.Perplexity" parent="Theme.Material3.Dark.NoActionBar">
         <!-- Customize your light theme here. -->
-        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+        <item name="colorPrimary">#000000</item>
+        <item name="colorAccent">#2196F3</item>
     </style>
 
     <style name="Theme.Perplexity" parent="Base.Theme.Perplexity" />

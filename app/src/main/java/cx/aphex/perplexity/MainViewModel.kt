@@ -20,6 +20,9 @@ import java.net.URL
 @BetaOpenAI
 class MainViewModel : ViewModel() {
 
+    private val _sources = MutableSharedFlow<String>(replay = 0)
+    val sources: SharedFlow<String> = _sources
+
     private val _answerChunks = MutableSharedFlow<List<String>>(replay = 0)
     val answerChunks: SharedFlow<List<String>> = _answerChunks
 
@@ -42,14 +45,14 @@ class MainViewModel : ViewModel() {
                 }
 
                 val sourcesListBuilder = StringBuilder()
-                sourcesListBuilder.append("\n\nSources\n")
+                sourcesListBuilder.append("Sources:\n\n")
                 sources.forEachIndexed { index, (url, text) ->
-                    sourcesListBuilder.append("[${index + 1}] [${URL(url).host}]($url)\n")
+                    sourcesListBuilder.append("[${index + 1}] [${URL(url).host}]($url)\n\n")
+                    _sources.emit(sourcesListBuilder.toString())
                 }
-                _answerChunks.emit(listOf(sourcesListBuilder.toString()))
-            }
 
-            _isFetchingAnswer.emit(false)
+                _isFetchingAnswer.emit(false)
+            }
         }
     }
 

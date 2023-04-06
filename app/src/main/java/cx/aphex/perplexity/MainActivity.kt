@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.view.KeyEvent
+import android.view.View
 import android.view.inputmethod.EditorInfo
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -53,13 +54,11 @@ class MainActivity : AppCompatActivity() {
         // Collect answer chunks and update the UI
         lifecycleScope.launch {
             viewModel.answerChunks.collect { newAnswerChunks ->
+                binding.answerCard.visibility = View.VISIBLE
+
                 if (newAnswerChunks.isNotEmpty()) {
                     // Remove the previous caret if it exists
-                    val previousCaretPosition = answerChunks.length - 1
-                    if (previousCaretPosition >= 0) {
-                        answerChunks.removeSpan(blinkingCaretSpan)
-                        answerChunks.delete(previousCaretPosition, previousCaretPosition + 1)
-                    }
+                    removeCaret(blinkingCaretSpan)
 
                     newAnswerChunks.forEach { chunk ->
                         answerChunks.append(chunk)
@@ -85,6 +84,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
+            viewModel.sources.collect { sources ->
+                removeCaret(blinkingCaretSpan)
+                binding.sourcesView.visibility = View.VISIBLE
+                markwon.setMarkdown(binding.sourcesView, sources)
+            }
+        }
+
+        lifecycleScope.launch {
             viewModel.isFetchingAnswer.collect { isFetching ->
                 if (isFetching) {
                     pulsingAnimation.start()
@@ -97,9 +104,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun removeCaret(blinkingCaretSpan: BlinkingCaretSpan) {
+        val previousCaretPosition = answerChunks.length - 1
+        if (previousCaretPosition >= 0) {
+            answerChunks.removeSpan(blinkingCaretSpan)
+            answerChunks.delete(previousCaretPosition, previousCaretPosition + 1)
+        }
+    }
+
     private fun performSearch() {
         val query = binding.searchQuery.text.toString()
-
+        binding.answerCard.visibility = View.GONE
+        binding.sourcesView.visibility = View.GONE
         answerChunks.clear()
         if (query.isNotBlank()) {
             viewModel.search(query)

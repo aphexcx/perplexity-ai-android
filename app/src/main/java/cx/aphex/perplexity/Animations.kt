@@ -25,11 +25,11 @@ object Animations {
     }
 
     fun createPulsingAnimation(target: ImageView): AnimatorSet {
-        val scaleXAnimator = ObjectAnimator.ofFloat(target, "scaleX", 1f, 1.1f, 1f).apply {
+        val scaleXAnimator = ObjectAnimator.ofFloat(target, "scaleX", 1f, 1.2f, 1f).apply {
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.RESTART
         }
-        val scaleYAnimator = ObjectAnimator.ofFloat(target, "scaleY", 1f, 1.1f, 1f).apply {
+        val scaleYAnimator = ObjectAnimator.ofFloat(target, "scaleY", 1f, 1.2f, 1f).apply {
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.RESTART
         }

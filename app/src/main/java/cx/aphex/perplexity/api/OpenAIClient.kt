@@ -35,7 +35,7 @@ object OpenAIClient {
                     content = prompt
                 )
             ),
-            maxTokens = 120,
+            maxTokens = 1000,
             temperature = 0.0
         )
 
